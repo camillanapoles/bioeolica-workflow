@@ -19,6 +19,7 @@ graphify-out/
 # --- artefatos regeneráveis (SSOT é o schema, não o binário) ---
 lab.db
 lab_db/graph_out/
+lab_db/bpmn_out/
 
 # --- índices de IA (regeneráveis) ---
 .gitnexus/
