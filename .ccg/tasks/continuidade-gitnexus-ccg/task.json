@@ -1,0 +1,45 @@
+{
+  "id": "continuidade-gitnexus-ccg",
+  "title": "Restaurar GitNexus + estabelecer monitoramento de continuidade CCG",
+  "status": "done",
+  "complexity": "M",
+  "risk": "low",
+  "domain": "backend",
+  "currentPhase": "done",
+  "nextAction": "arquivado — deliverables committed (chore branch)",
+  "createdAt": "2026-06-28T13:00:00Z",
+  "branch": "main",
+  "findings": {
+    "gitnexus_index": "re-indexado p/ main@641178a — 635 nós / 943 arestas / 24 flows",
+    "gitnexus_repair": "ladybugdb native binary (lbugjs.node) ausente — reinstalado via install.js com elevação",
+    "tests": "38/38 passando (5 módulos) via python3 -m tests",
+    "tooling": "pytest ausente — por mandato zero-PyPI (intencional), não instalar",
+    "ruff_fixed": "E741 variável ambígua `l` em lab_db/agent_exec.py:149",
+    "pyright_fixed": "tuple-unpacking sobre None em tests/test_numeric_exec.py:77",
+    "head_commit": "641178a (merge PR #4 — engine completo em main)",
+    "fcc_stack": "fcc-server live pid 36536; fcc-claude session agent-execution-layer ativa; mgrep dry-run ok",
+    "timeline_alignment": "sessão fcc-claude já mergeou 4 PRs em main; trabalho local alinhado"
+  },
+  "deliverables": [
+    "tests/__main__.py — orquestrador de testes (python3 -m tests)",
+    ".ccg/spec/backend/index.md — spec capturado do código",
+    ".ccg/tasks/continuidade-gitnexus-ccg/STATUS.md — doc de continuidade",
+    "Correções: lab_db/agent_exec.py (ruff), tests/test_numeric_exec.py (pyright)"
+  ],
+  "review": {
+    "models": [
+      "fcc-claude (Claude)",
+      "fcc-codex (Codex/GLM-5.2)"
+    ],
+    "verdict": "APPROVE (ambos)",
+    "fixes_applied": [
+      "W1 stderr+timing no orquestrador",
+      "W2 pre-commit hook",
+      "W3 stale docs",
+      "W4 overclaim spec",
+      "W5 tabela md",
+      "W6 gitignore .bak"
+    ]
+  },
+  "completedAt": "2026-06-28T15:10:00Z"
+}

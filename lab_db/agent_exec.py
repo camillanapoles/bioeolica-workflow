@@ -146,7 +146,7 @@ def build_prompt(conn, agent: dict) -> tuple[str, str]:
         f"principle: {kdi[2] if kdi else ''}\n"
         f"philosophy: {kdi[3] if kdi else ''}\n"
         f"capabilities: {[c[0] for c in caps]}\n"
-        f"context_layers (M3 macro/meso/micro): {[{'id': l[0], 'name': l[1]} for l in layers]}"
+        f"context_layers (M3 macro/meso/micro): {[{'id': layer[0], 'name': layer[1]} for layer in layers]}"
     )
     user = (
         f"run_id={agent['run_id']} domain={agent['domain_id']} "
