@@ -92,7 +92,30 @@ CREATE TABLE agent_run (
     status        TEXT NOT NULL DEFAULT 'pending',   -- pending|running|done|fail|timeout
     started_at    TEXT,
     finished_at   TEXT,
-    result_ref    TEXT                  -- path/índice do resultado (F4)
+    result_ref    TEXT,                 -- path/índice do resultado (F4)
+    provider_id   TEXT REFERENCES agent_provider(id)  -- resolvedor cai no is_default se NULL
+);
+
+-- Configuração de provider LLM como DADO (mandato no-hardcoded). kind é mapeado pelo
+-- executor (valor-de-coluna -> callable), nunca literal em código. api_key_env guarda o
+-- NOME da variável de ambiente (nunca a chave). is_default=1 em exatamente 1 linha.
+CREATE TABLE agent_provider (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,        -- stub | http (extensível)
+    model        TEXT,                 -- nome do modelo (NULL p/ stub)
+    base_url     TEXT,                 -- endpoint chat-completions (NULL p/ stub)
+    api_key_env  TEXT,                 -- nome da env-var (lida via os.environ no call)
+    timeout_s    INTEGER NOT NULL,
+    is_default   INTEGER NOT NULL DEFAULT 0,
+    note         TEXT
+);
+
+-- Payload do agente (casa do "resultado real"). Append-style: nunca UPDATE/DELETE.
+CREATE TABLE agent_output (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT NOT NULL REFERENCES agent_run(id),
+    payload     TEXT,
+    created_at  TEXT NOT NULL
 );
 
 -- Watchdog de gate: sem verdict PASS/FAIL antes do deadline -> evento TIMEOUT.
@@ -127,6 +150,17 @@ GATE_TIMEOUTS = [
     ("G3", "F5", 3600),    # validação: 60 min
     ("G4", "F5", 1800),    # validada: 30 min
     ("G5", "F6", 600),     # cobertura: 10 min
+]
+
+# Providers LLM como DADOS (mandato no-hardcoded). agent_exec.resolve_provider lê daqui;
+# is_default=1 marca o provider usado quando agent_run.provider_id é NULL. api_key_env é o
+# NOME da env-var (a chave nunca entra no DB). Estes são SEED (config-base, extensível).
+# (id, kind, model, base_url, api_key_env, timeout_s, is_default, note)
+PROVIDERS = [
+    ("prov_stub", "stub", None, None, None, 30, 1,
+     "offline deterministic — pipeline GREEN sem rede/PyPI"),
+    ("prov_http_local", "http", "", "http://localhost:11434/v1", "LLM_API_KEY", 60, 0,
+     "stdlib urllib; auth via os.environ[api_key_env]"),
 ]
 
 
@@ -241,6 +275,18 @@ def seed_dmns(conn):
     # thresholds de watchdog como dados (zero hardcoded)
     c.execute("DELETE FROM gate_timeout")
     c.executemany("INSERT INTO gate_timeout (gate_id,phase_id,seconds) VALUES (?,?,?)", GATE_TIMEOUTS)
+    conn.commit()
+
+
+def seed_providers(conn):
+    """Popula agent_provider com os SEEDs de config (stub default + http local). Idempotente."""
+    c = conn.cursor()
+    c.execute("DELETE FROM agent_provider")
+    c.executemany(
+        "INSERT INTO agent_provider (id,kind,model,base_url,api_key_env,timeout_s,is_default,note) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        PROVIDERS,
+    )
     conn.commit()
 
 
