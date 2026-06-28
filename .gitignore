@@ -1,0 +1,55 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- venv / direnv ---
+.venv/
+.envrc.local
+
+# --- cache de ferramentas ---
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+graphify-out/
+
+# --- artefatos regeneráveis (SSOT é o schema, não o binário) ---
+lab.db
+lab_db/graph_out/
+
+# --- índices de IA (regeneráveis) ---
+.gitnexus/
+
+# --- sistema ---
+.DS_Store
+*.swp
+
+# --- home / personal dotfiles (nunca commitar; vazam do $HOME no status) ---
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.gitmodules
+.ripgreprc
+.mcp.json
+.idea/
+.vscode/
+.idea
+.vscode
+
+# --- config local do Claude Code por usuário (global, não do projeto) ---
+# (sem barra final: alguns destes são char-devices do sandbox, não dirs)
+.claude/agents
+.claude/commands
+.claude/hooks
+.claude/launch.json
+.claude/routines
+.claude/scheduled_tasks.json
+.claude/skills/
+.claude/workflows
+.claude/index.json
