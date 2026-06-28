@@ -268,6 +268,17 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
         _set_status(conn, run_id, "FAIL")
         return run_id
 
+    # G4 — Validada (validação analítica dos resultados numéricos)
+    num_metrics = _collect_numeric_metrics(conn, run_id)
+    v4, o4 = ("FAIL", None) if force_fail_gate == "G4" else dmn.vvv_verdict(conn, "G4", {**metrics, **num_metrics})
+    _record_verdict(conn, run_id, "G4", "F5", v4, "dmn_vvv_acceptance", o4,
+                    detail=f"num_metrics={num_metrics}")
+    _append_wal(conn, run_id, "F5", "orchestrator", "validação analítica G4", f"MAP/G4/{run_id}")
+    if v4 == "FAIL":
+        _kaizen(conn, run_id, fsm, "F5")
+        _set_status(conn, run_id, "FAIL")
+        return run_id
+
     # F6 — Cobertura + Memória + G5. Gate hard = cobertura ≥ 0.75 (D1: alvo 75-90%).
     # >0.90 é over-coverage (subótimo, sinalizado no detail), não FAIL.
     # EXECUÇÃO REAL: cada agent_run pendente passa pelo executor (provider resolvido do DB,
@@ -295,12 +306,43 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
         _set_status(conn, run_id, "FAIL")
         return run_id
 
-    # F7 — Entrega Validada
-    _record_verdict(conn, run_id, "DELIVERY", "F7", "PASS", detail=f"deliverable#{run_id}")
-    _append_wal(conn, run_id, "F7", "orchestrator", "entrega rastreável selada",
-                f"MAP/OUT/{run_id}", "D5,D6")
+    # F7 — Entrega Validada (report artifact)
+    from . import report as _report_mod
+    report_dict = _report_mod.emit_report(conn, run_id)
+    _record_verdict(conn, run_id, "DELIVERY", "F7", "PASS",
+                    detail=f"report_artifact run_id={run_id}; cardinality={cardinality}; coverage={coverage:.2f}")
+    _append_wal(conn, run_id, "F7", "orchestrator", "entrega rastreável selada + report",
+                f"MAP/OUT/{run_id}", "D5,D6,D7")
     _set_status(conn, run_id, "PASS")
     return run_id
+
+
+def _collect_numeric_metrics(conn, run_id) -> dict:
+    """Lê agent_output.payload dos agentes da run com mode='real-numeric'.
+    Extrai TODOS os campos escalares do result (sem hardcode de nomes de métrica).
+    O DMN (dmn.vvv_verdict) casa naturalmente com as chaves que tiver regras.
+    Retorna dict vazio se sem dados numéricos (G4 passa por ausência de critério)."""
+    rows = conn.execute(
+        "SELECT o.payload FROM agent_output o "
+        "JOIN agent_run a ON a.id=o.agent_id "
+        "WHERE a.run_id=? AND o.payload LIKE '%real-numeric%'",
+        (run_id,),
+    ).fetchall()
+    if not rows:
+        return {}
+    num = {}
+    for (payload_str,) in rows:
+        try:
+            payload = json.loads(payload_str)
+            result = payload.get("result", {})
+        except (json.JSONDecodeError, TypeError):
+            continue
+        # Coleta TODOS os campos escalares do result — sem hardcode de nomes.
+        # O G4 DMN lê input_key do DB; se a chave existe no result, casa.
+        for key, val in result.items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                num[key] = val
+    return num
 
 
 def _purge_run(conn, run_id):
@@ -308,6 +350,7 @@ def _purge_run(conn, run_id):
     antes de reprocessar. Ordem inversa de dependência (FKs child-first). NÃO toca
     dmn_rule/schema. Inclui tabelas multi-agente (team/agent/watchdog) — senão FK
     de team_instance→workflow_instance bloqueia o DELETE."""
+    conn.execute("DELETE FROM report_artifact WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM agent_output WHERE agent_id IN "
                  "(SELECT id FROM agent_run WHERE run_id=?)", (run_id,))
     conn.execute("DELETE FROM agent_run WHERE run_id=?", (run_id,))

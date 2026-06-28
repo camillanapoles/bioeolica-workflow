@@ -152,6 +152,14 @@ CREATE TABLE method_kernel (
 CREATE INDEX IF NOT EXISTS idx_agent_run_team ON agent_run(team_instance_id);
 CREATE INDEX IF NOT EXISTS idx_gate_verdict_run ON gate_verdict(run_id, gate);
 CREATE INDEX IF NOT EXISTS idx_watchdog_run ON timeout_watchdog(run_id, tripped);
+
+CREATE TABLE report_artifact (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT NOT NULL REFERENCES workflow_instance(run_id),
+    report_json TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_report_run ON report_artifact(run_id);
 """
 
 # Thresholds de watchdog como DADOS (mandato no-hardcoded). fsm.arm_watchdogs lê daqui.
@@ -261,6 +269,8 @@ _VVV_ROWS = [
     (24, "G3", "error_vs_experimental", "lt", "0.05",         "erro vs experimental < 5%"),
     (25, "G4", "source_quality",      "eq", "peer-reviewed",  "fonte peer-reviewed"),
     (26, "G4", "reproducible",        "eq", "1",              "reprodutível (bit-exact)"),
+    (27, "G4", "error_vs_analytic",   "lt", "0.01",           "erro numérico vs solução analítica < 1%"),
+    (28, "G4", "linear_residual",     "lt", "1e-8",           "resíduo do solver linear (exatidão da malha discreta)"),
 ]
 
 

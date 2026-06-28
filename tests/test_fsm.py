@@ -111,6 +111,34 @@ def test_idempotent_rerun_same_run_id():
     assert n == 1, f"re-run deveria ser idempotente; {n} instâncias"
 
 
+# ──────────── G4 Validada (gate de validação analítica) ────────────
+def test_g4_verdict_present_in_fsm_run():
+    """Após fsm.run com ctx de fluidos (tem agent_output numérico),
+    gate_verdict contém gate='G4'."""
+    ctx = dict(id="G4-TEST", who="lab", what="g4 check", when="2026",
+               where="x", why="y", how="FEM", deformation="small")
+    rid = fsm.run(CONN, ctx, metrics={"mesh_error": 0.005, "time_residual": 0.003,
+                                       "source_quality": "peer-reviewed", "reproducible": 1})
+    gates = [r[0] for r in CONN.execute(
+        "SELECT gate FROM gate_verdict WHERE run_id=? ORDER BY id", (rid,)).fetchall()]
+    assert "G4" in gates, f"G4 deveria estar presente em gate_verdict: {gates}"
+
+
+def test_f7_report_artifact_present():
+    """Após fsm.run bem-sucedido, report_artifact tem 1 linha para a run."""
+    ctx = dict(id="F7-TEST", who="lab", what="report check", when="2026",
+               where="x", why="y", how="FEM", deformation="small")
+    rid = fsm.run(CONN, ctx, metrics={"mesh_error": 0.005, "time_residual": 0.003,
+                                       "source_quality": "peer-reviewed", "reproducible": 1})
+    status = CONN.execute(
+        "SELECT status FROM workflow_instance WHERE run_id=?", (rid,)).fetchone()[0]
+    if status == "PASS":
+        n = CONN.execute(
+            "SELECT COUNT(*) FROM report_artifact WHERE run_id=?", (rid,)).fetchone()[0]
+        assert n == 1, f"report_artifact deveria ter 1 linha p/ run PASS; tem {n}"
+    # Se FAIL (ex: G4 rejeitou), report não é gerado — isso é esperado.
+
+
 # ──────────── Anti-hardcode (mandato ZERO literais de domínio no ENGINE) ────────────
 def test_no_hardcoded_domains_in_engine():
     """O ENGINE (fsm.py/dmn.py, excluindo demo main()) NÃO contém nomes de domínio/método

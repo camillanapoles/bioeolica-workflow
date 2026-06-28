@@ -344,6 +344,17 @@ class GateTimeout(Base):
     seconds = Column(Integer, nullable=False)
 
 
+class ReportArtifact(Base):
+    """Artefato de report (F7). Append-only — um report por execução bem-sucedida.
+    report_json carrega o dict completo de build_report() — metadados, gates, domínios,
+    resultados numéricos. SSOT do "resultado do lab real"."""
+    __tablename__ = "report_artifact"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), nullable=False)
+    report_json = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False)
+
+
 Index("idx_agent_run_team", AgentRun.team_instance_id)
 Index("idx_gate_verdict_run", GateVerdict.run_id, GateVerdict.gate)
 Index("idx_watchdog_run", TimeoutWatchdog.run_id, TimeoutWatchdog.tripped)
