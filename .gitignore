@@ -54,3 +54,9 @@ lab_db/bpmn_out/
 .claude/skills/
 .claude/workflows
 .claude/index.json
+
+# Backup local do editor (não versionar)
+.claude/settings*.bak
+
+# Estado de sessão CCG (alta rotatividade, não versionar)
+.ccg/tasks/**/.turns.json

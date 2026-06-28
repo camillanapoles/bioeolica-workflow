@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# scripts/pre-commit — gate de continuidade CCG (iron rule #6).
+# Instalação: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+# Garante que ruff + pyright + testes passam antes de qualquer commit.
+set -euo pipefail
+# Resolve o symlink (.git/hooks/pre-commit -> ../../scripts/pre-commit): sem isto,
+# dirname "$0" aponta para .git/hooks/ e não encontra verify.sh.
+exec bash "$(dirname "$(readlink -f "$0")")/verify.sh"

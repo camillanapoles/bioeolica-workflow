@@ -74,7 +74,9 @@ def test_fdm_advection_produces_real_numbers():
 
 # ──────────── kernel resolvido do DB (method_kernel — zero hardcode) ────────────
 def test_kernel_resolved_from_db():
-    kind, params = numeric_exec.resolve_kernel(CONN, "FEM")
+    resolved = numeric_exec.resolve_kernel(CONN, "FEM")
+    assert resolved is not None, "kernel FEM deve existir no seed"
+    kind, params = resolved
     assert kind == "fdm_poisson"
     assert params["source"] == "x" and params["n"] == 60
     # method_id sem linha → None (fallback ao provider)
