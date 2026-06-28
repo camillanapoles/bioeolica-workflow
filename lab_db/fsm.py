@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .build import connect
-from . import dmn, crud
+from . import dmn, crud, agent_exec
 
 
 # ═══════════════════════ modelo da FSM (data-driven) ═══════════════════════
@@ -270,8 +270,14 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
 
     # F6 — Cobertura + Memória + G5. Gate hard = cobertura ≥ 0.75 (D1: alvo 75-90%).
     # >0.90 é over-coverage (subótimo, sinalizado no detail), não FAIL.
-    covered = cardinality  # em demo sem solver, todos aplicáveis são cobertos
-    coverage = covered / cardinality if cardinality else 0.0
+    # EXECUÇÃO REAL: cada agent_run pendente passa pelo executor (provider resolvido do DB,
+    # prompt montado de kdi_agent+cadeia domínio, watchdog respeitado) → done/fail/timeout.
+    # Substitui o mock bulk-done anterior — agora cobertura conta só agentes efetivamente 'done'.
+    agent_exec.run_pending(conn, run_id)
+    done = conn.execute(
+        "SELECT COUNT(*) FROM agent_run WHERE run_id=? AND status='done'", (run_id,)
+    ).fetchone()[0]
+    coverage = done / cardinality if cardinality else 0.0
     if force_fail_gate == "G5":
         g5 = "FAIL"
     else:
@@ -280,14 +286,10 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
     _record_verdict(conn, run_id, "G5", "F6", g5, detail=f"coverage={coverage:.2f}{note}")
     _append_wal(conn, run_id, "F6", "orchestrator", "selo WAL + Mapa Único",
                 f"MAP/WAL/{run_id}", "D8,D9,D10")
-    # agentes especialistas entregam seus resultados (result_ref = método aplicado)
-    for (ar_id, method_id) in conn.execute(
-        "SELECT id,method_id FROM agent_run WHERE run_id=?", (run_id,)
-    ).fetchall():
-        crud.set_agent_status(conn, ar_id, "done", result_ref=f"MAP/EXE/{run_id}/{method_id}",
-                              method_id=method_id)
     conn.execute("UPDATE workflow_instance SET coverage=? WHERE run_id=?", (coverage, run_id))
     conn.commit()
+    # Watchdog: registra TIMEOUT de gates/agentes que estouraram deadline (comunicação on-time).
+    crud.trip_expired(conn, run_id)
     if g5 == "FAIL":
         _kaizen(conn, run_id, fsm, "F6")
         _set_status(conn, run_id, "FAIL")
@@ -306,6 +308,8 @@ def _purge_run(conn, run_id):
     antes de reprocessar. Ordem inversa de dependência (FKs child-first). NÃO toca
     dmn_rule/schema. Inclui tabelas multi-agente (team/agent/watchdog) — senão FK
     de team_instance→workflow_instance bloqueia o DELETE."""
+    conn.execute("DELETE FROM agent_output WHERE agent_id IN "
+                 "(SELECT id FROM agent_run WHERE run_id=?)", (run_id,))
     conn.execute("DELETE FROM agent_run WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM timeout_watchdog WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM team_instance WHERE run_id=?", (run_id,))

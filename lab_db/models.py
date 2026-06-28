@@ -10,7 +10,8 @@ Engine: SQLite (desenvolvimento). Trocável por PostgreSQL+pgvector em produçã
 sem mudar o schema.
 
 Tabelas runtime (multi-agente + FSM) em lab_db.seed_fsm: runtime_domain,
-team_instance, agent_run, gate_verdict, timeout_watchdog, gate_timeout, dmn_rule.
+team_instance, agent_run, agent_provider, agent_output, gate_verdict,
+timeout_watchdog, gate_timeout, dmn_rule.
 Este ORM as espelha para manter o princípio 1:1 (DDL sqlite3 em build.py/seed_fsm.py
 == ORM aqui). Migrar um exige migrar o outro.
 
@@ -236,6 +237,30 @@ class AgentRun(Base):
     started_at = Column(String)
     finished_at = Column(String)
     result_ref = Column(String)
+    provider_id = Column(String, ForeignKey("agent_provider.id"))  # NULL → is_default=1
+
+
+class AgentProvider(Base):
+    """Config de provider LLM como DADO (mandato no-hardcoded). kind é mapeado pelo
+    executor (valor-de-coluna → callable); api_key_env guarda o NOME da env-var."""
+    __tablename__ = "agent_provider"
+    id = Column(String, primary_key=True)
+    kind = Column(String, nullable=False)            # stub | http (extensível)
+    model = Column(String)
+    base_url = Column(String)
+    api_key_env = Column(String)                     # nome da env-var (nunca a chave)
+    timeout_s = Column(Integer, nullable=False)
+    is_default = Column(Integer, nullable=False, default=0)
+    note = Column(String)
+
+
+class AgentOutput(Base):
+    """Payload do agente — casa do 'resultado real'. Append-style (nunca UPDATE/DELETE)."""
+    __tablename__ = "agent_output"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_id = Column(String, ForeignKey("agent_run.id"), nullable=False)
+    payload = Column(Text)
+    created_at = Column(String, nullable=False)
 
 
 class DmnDecision(Base):

@@ -316,6 +316,7 @@ def main():
     # FSM data-driven: tabelas aditivas + 3 DMNs materializadas como linhas (zero hardcoded).
     seed_fsm.init_fsm_schema(conn)
     seed_fsm.seed_dmns(conn)
+    seed_fsm.seed_providers(conn)
     conn.execute("INSERT INTO wal_log (run_id,ts,phase,actor_agent,action_5w1h,map_index,quality_metrics,patch) "
                  "VALUES (?,?,?,?,?,?,?,?)",
                  ("RUN-DEMO-001", "2026-06-28T00:00:00Z", "F1", "orchestrator",
