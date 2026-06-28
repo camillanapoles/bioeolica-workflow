@@ -302,7 +302,9 @@ def run_queries(conn):
     print(f"\n{sep}\nTotais:")
     for t in ("domain_catalog","capability","numerical_method","tool","socratic_rule",
               "response_step","context_layer","mandate","workflow_phase","quality_metric"):
-        n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        if not t.isidentifier():
+            continue
+        n = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
         print(f"  {t:<20} {n} linhas")
 
 
@@ -316,6 +318,8 @@ def main():
     # FSM data-driven: tabelas aditivas + 3 DMNs materializadas como linhas (zero hardcoded).
     seed_fsm.init_fsm_schema(conn)
     seed_fsm.seed_dmns(conn)
+    seed_fsm.seed_providers(conn)
+    seed_fsm.seed_method_kernels(conn)
     conn.execute("INSERT INTO wal_log (run_id,ts,phase,actor_agent,action_5w1h,map_index,quality_metrics,patch) "
                  "VALUES (?,?,?,?,?,?,?,?)",
                  ("RUN-DEMO-001", "2026-06-28T00:00:00Z", "F1", "orchestrator",

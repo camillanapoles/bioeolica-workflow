@@ -9,10 +9,11 @@ como LINHAS no DB, satisfazendo o mandato no-hardcoded.
 Engine: SQLite (desenvolvimento). Trocável por PostgreSQL+pgvector em produção
 sem mudar o schema.
 
-Tabelas runtime (multi-agente + FSM) em lab_db.seed_fsm: runtime_domain,
-team_instance, agent_run, gate_verdict, timeout_watchdog, gate_timeout, dmn_rule.
-Este ORM as espelha para manter o princípio 1:1 (DDL sqlite3 em build.py/seed_fsm.py
-== ORM aqui). Migrar um exige migrar o outro.
+Tabelas runtime (multi-agente + FSM) em lab_db.seed_fsm: workflow_instance,
+runtime_domain, team_instance, agent_run, agent_provider, agent_output, method_kernel,
+gate_verdict, timeout_watchdog, gate_timeout, dmn_rule.
+Este ORM as espelha 1:1 (DDL sqlite3 em build.py/seed_fsm.py == ORM aqui). Migrar um
+exige migrar o outro.
 
 NOTA: sqlalchemy é uma dependência OPCIONAL — não exigida para build/run do DB
 (sqlite3 stdlib basta). Desativado reportMissingImports neste arquivo porque o
@@ -202,71 +203,131 @@ class WalLog(Base):
 
 
 # ───────────────────────── EXTENSÕES MULTI-AGENTE / DMN / WATCHDOG ─────────────────────────
-# Espelho ORM 1:1 de lab_db/extensions.py (DDL sqlite3). Manter sincronizado.
+# Espelho ORM 1:1 do DDL sqlite3 em lab_db/seed_fsm.py (tabelas runtime unificadas).
+# Mandato espelhamento: migrar um exige migrar o outro. Nada importa este módulo em runtime
+# (é referência p/ migração PostgreSQL) — mas colunas/tipos/nomes DEVEM bater com a DDL.
+class WorkflowInstance(Base):
+    """Instância de workflow (uma por pesquisa submetida). Rastreabilidade M4/M6."""
+    __tablename__ = "workflow_instance"
+    run_id = Column(String, primary_key=True)
+    started_at = Column(String, nullable=False)
+    research_context_json = Column(String, nullable=False)
+    status = Column(String, nullable=False)          # RUNNING | PASS | FAIL | BLOCKED
+    cardinality = Column(Integer)                    # |runtime_domain applicable| (variável)
+    coverage = Column(Float)                         # fraction [0,1]
+
+
 class RuntimeDomain(Base):
-    """Domínio derivado do contexto (KDI + 5W1H + Ishikawa + M3). is_seed=0 em domain_catalog."""
+    """Domínio derivado em runtime (F2). PK composta (run_id, domain_id). is_seed distingue
+    domínios-base (1) dos propostos pelo contexto (0). method_id selecionado em F3."""
     __tablename__ = "runtime_domain"
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False, unique=True)
-    derived_from = Column(String)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), primary_key=True)
+    domain_id = Column(String, primary_key=True)
+    is_seed = Column(Integer, nullable=False)
     relevance_score = Column(Float)
-    team_instance_id = Column(String)
-    created_at = Column(String, nullable=False)
+    applicable = Column(Integer)                     # 1 inclui / 0 exclui (gate G1)
+    justification = Column(Text)
+    method_id = Column(String)                       # selecionado em F3 (dmn_method_selection)
+    team_instance_id = Column(String)                # link ao time spawnado (M7)
+    agent_run_id = Column(String)                    # link ao agente especialista
 
 
 class TeamInstance(Base):
     """Instância de time — cardinalidade N decidida em G1 (variável, context-dependent)."""
     __tablename__ = "team_instance"
     id = Column(String, primary_key=True)
-    run_id = Column(String, nullable=False)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), nullable=False)
     cardinality = Column(Integer, nullable=False)
-    created_at = Column(String, nullable=False)
     status = Column(String, nullable=False, default="composing")
+    created_at = Column(String, nullable=False)
 
 
 class AgentRun(Base):
-    """Execução de um agente especialista (1 por domínio relevante)."""
+    """Execução de um agente especialista (1 por domínio relevante). Sujeito a watchdog."""
     __tablename__ = "agent_run"
     id = Column(String, primary_key=True)
     team_instance_id = Column(String, ForeignKey("team_instance.id"), nullable=False)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), nullable=False)
     domain_id = Column(String, nullable=False)
-    capability_id = Column(String)
     method_id = Column(String)
-    status = Column(String, nullable=False, default="pending")
+    status = Column(String, nullable=False, default="pending")  # pending|running|done|fail|timeout
     started_at = Column(String)
     finished_at = Column(String)
     result_ref = Column(String)
+    provider_id = Column(String, ForeignKey("agent_provider.id"))  # NULL → is_default=1
 
 
-class DmnDecision(Base):
-    """DMN materializado — substitui strings soltas em workflow_phase.dmn_source.
-    Cada linha = uma regra de decisão (relevance/method_selection/vvv_acceptance)."""
-    __tablename__ = "dmn_decision"
+class AgentProvider(Base):
+    """Config de provider LLM como DADO (mandato no-hardcoded). kind é mapeado pelo
+    executor (valor-de-coluna → callable); api_key_env guarda o NOME da env-var."""
+    __tablename__ = "agent_provider"
     id = Column(String, primary_key=True)
-    dmn_source = Column(String, nullable=False)
-    input_key = Column(String, nullable=False)
-    output_value = Column(String, nullable=False)
-    rule = Column(String)
+    kind = Column(String, nullable=False)            # stub | http (extensível)
+    model = Column(String)
+    base_url = Column(String)
+    api_key_env = Column(String)                     # nome da env-var (nunca a chave)
+    timeout_s = Column(Integer, nullable=False)
+    is_default = Column(Integer, nullable=False, default=0)
+    note = Column(String)
 
 
-class GateEvent(Base):
-    """Evento de gate auditável — a FSM transiciona por estes registros."""
-    __tablename__ = "gate_event"
+class AgentOutput(Base):
+    """Payload do agente — casa do 'resultado real'. Append-style (nunca UPDATE/DELETE)."""
+    __tablename__ = "agent_output"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_id = Column(String, ForeignKey("agent_run.id"), nullable=False)
+    payload = Column(Text)
+    created_at = Column(String, nullable=False)
+
+
+class MethodKernel(Base):
+    """Ponte method_id→kernel executável (mandato no-hardcoded). `kernel` é valor-de-coluna
+    resolvido pelo registry em numeric_exec._KERNELS (valor-de-coluna→callable). Linha ausente
+    → numeric_exec cai no fallback provider (LLM/stub)."""
+    __tablename__ = "method_kernel"
+    method_id = Column(String, ForeignKey("numerical_method.id"), primary_key=True)
+    kernel = Column(String, nullable=False)
+    params_json = Column(Text)
+    note = Column(String)
+
+
+class DmnRule(Base):
+    """DMN materializado (tabela dmn_rule). Cada linha = uma regra de decisão ordenada por
+    `ord` (menor = primeira), escopada por domain_id ou NULL (global). decision_id identifica
+    qual DMN (relevance/method_selection/vvv_acceptance)."""
+    __tablename__ = "dmn_rule"
+    decision_id = Column(String, nullable=False)     # dmn_relevance_check | method_selection | vvv
+    ord = Column(Integer, nullable=False)            # prioridade (menor = primeira)
+    scope = Column(String)                           # domain_id ou NULL (global)
+    input_key = Column(String, nullable=False)
+    operator = Column(String, nullable=False)        # eq | in | lt | gt | between | keyword_match
+    input_value = Column(String, nullable=False)
+    output_key = Column(String, nullable=False)
+    output_value = Column(String, nullable=False)
+    note = Column(String)
+
+
+class GateVerdict(Base):
+    """Veredito de gate auditável (tabela gate_verdict). Toda decisão rastreável à regra DMN
+    (dmn_decision + dmn_rule_ord) ou ao actor (dmn/agent_run_id/orchestrator/watchdog)."""
+    __tablename__ = "gate_verdict"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), nullable=False)
+    gate = Column(String, nullable=False)            # G0 | G1 | G_metodo | G2 | G3 | G4 | G5
+    phase = Column(String, nullable=False)           # F1..F7
+    verdict = Column(String, nullable=False)         # PASS | FAIL
+    dmn_decision = Column(String)                    # qual decision_id decidiu (NULL p/ heurística)
+    dmn_rule_ord = Column(Integer)                   # qual regra (ord) disparou
+    decided_by = Column(String)                      # dmn | agent_run_id | orchestrator | watchdog
+    detail = Column(Text)
     ts = Column(String, nullable=False)
-    run_id = Column(String, nullable=False)
-    gate_id = Column(String, nullable=False)
-    phase_id = Column(String)
-    verdict = Column(String, nullable=False)  # PASS | FAIL | PENDING | TIMEOUT
-    decided_by = Column(String)
-    detail = Column(String)
 
 
 class TimeoutWatchdog(Base):
-    """Watchdog de gate — se nenhum PASS/FAIL antes do deadline -> GateEvent TIMEOUT."""
+    """Watchdog de gate — sem verdict PASS/FAIL antes do deadline -> GateVerdict TIMEOUT."""
     __tablename__ = "timeout_watchdog"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(String, nullable=False)
+    run_id = Column(String, ForeignKey("workflow_instance.run_id"), nullable=False)
     gate_id = Column(String, nullable=False)
     phase_id = Column(String)
     armed_at = Column(String, nullable=False)
@@ -275,8 +336,16 @@ class TimeoutWatchdog(Base):
     trip_reason = Column(String)
 
 
+class GateTimeout(Base):
+    """Thresholds de timeout POR GATE como dados (não literais em código). Lidos por fsm/crud."""
+    __tablename__ = "gate_timeout"
+    gate_id = Column(String, primary_key=True)
+    phase_id = Column(String)
+    seconds = Column(Integer, nullable=False)
+
+
 Index("idx_agent_run_team", AgentRun.team_instance_id)
-Index("idx_gate_event_run", GateEvent.run_id, GateEvent.gate_id)
+Index("idx_gate_verdict_run", GateVerdict.run_id, GateVerdict.gate)
 Index("idx_watchdog_run", TimeoutWatchdog.run_id, TimeoutWatchdog.tripped)
 
 

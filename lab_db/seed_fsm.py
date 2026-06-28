@@ -92,7 +92,30 @@ CREATE TABLE agent_run (
     status        TEXT NOT NULL DEFAULT 'pending',   -- pending|running|done|fail|timeout
     started_at    TEXT,
     finished_at   TEXT,
-    result_ref    TEXT                  -- path/índice do resultado (F4)
+    result_ref    TEXT,                 -- path/índice do resultado (F4)
+    provider_id   TEXT REFERENCES agent_provider(id)  -- resolvedor cai no is_default se NULL
+);
+
+-- Configuração de provider LLM como DADO (mandato no-hardcoded). kind é mapeado pelo
+-- executor (valor-de-coluna -> callable), nunca literal em código. api_key_env guarda o
+-- NOME da variável de ambiente (nunca a chave). is_default=1 em exatamente 1 linha.
+CREATE TABLE agent_provider (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,        -- stub | http (extensível)
+    model        TEXT,                 -- nome do modelo (NULL p/ stub)
+    base_url     TEXT,                 -- endpoint chat-completions (NULL p/ stub)
+    api_key_env  TEXT,                 -- nome da env-var (lida via os.environ no call)
+    timeout_s    INTEGER NOT NULL,
+    is_default   INTEGER NOT NULL DEFAULT 0,
+    note         TEXT
+);
+
+-- Payload do agente (casa do "resultado real"). Append-style: nunca UPDATE/DELETE.
+CREATE TABLE agent_output (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT NOT NULL REFERENCES agent_run(id),
+    payload     TEXT,
+    created_at  TEXT NOT NULL
 );
 
 -- Watchdog de gate: sem verdict PASS/FAIL antes do deadline -> evento TIMEOUT.
@@ -114,6 +137,18 @@ CREATE TABLE gate_timeout (
     seconds   INTEGER NOT NULL
 );
 
+-- Ponte método numérico -> kernel executável (mandato no-hardcoded). method_id é FK ao
+-- catálogo JSON1; `kernel` é um valor-de-coluna mapeado pelo executor (numeric_exec) via
+-- registry valor-de-coluna→callable (mesmo padrão de _PROVIDERS/_GATE_KIND) — nunca literal
+-- de lógica. `params_json` carrega parâmetros do solver (grid, iters, BCs) como DADO.
+-- Linha ausente → aquele method_id não tem kernel stdlib; executor cai no provider (LLM/stub).
+CREATE TABLE method_kernel (
+    method_id   TEXT PRIMARY KEY REFERENCES numerical_method(id),
+    kernel      TEXT NOT NULL,    -- fdm_poisson | fdm_advection | ... (registry)
+    params_json TEXT,              -- parâmetros numéricos como dado (JSON)
+    note        TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_run_team ON agent_run(team_instance_id);
 CREATE INDEX IF NOT EXISTS idx_gate_verdict_run ON gate_verdict(run_id, gate);
 CREATE INDEX IF NOT EXISTS idx_watchdog_run ON timeout_watchdog(run_id, tripped);
@@ -127,6 +162,32 @@ GATE_TIMEOUTS = [
     ("G3", "F5", 3600),    # validação: 60 min
     ("G4", "F5", 1800),    # validada: 30 min
     ("G5", "F6", 600),     # cobertura: 10 min
+]
+
+# Providers LLM como DADOS (mandato no-hardcoded). agent_exec.resolve_provider lê daqui;
+# is_default=1 marca o provider usado quando agent_run.provider_id é NULL. api_key_env é o
+# NOME da env-var (a chave nunca entra no DB). Estes são SEED (config-base, extensível).
+# (id, kind, model, base_url, api_key_env, timeout_s, is_default, note)
+PROVIDERS = [
+    ("prov_stub", "stub", None, None, None, 30, 1,
+     "offline deterministic — pipeline GREEN sem rede/PyPI"),
+    ("prov_http_local", "http", "", "http://localhost:11434/v1", "LLM_API_KEY", 60, 0,
+     "stdlib urllib; auth via os.environ[api_key_env]"),
+]
+
+# Ponte método→kernel como DADO (mandato no-hardcoded). O `kernel` aqui é um valor-de-coluna
+# resolvido pelo registry em numeric_exec._KERNELS (valor-de-coluna→callable) — adicionar um
+# solver = 1 entrada no registry + 1 linha aqui, nunca literal em branch de código.
+# params_json carrega a config numérica (grid, iters, BC) como dado; o kernel aplica defaults
+# se faltar. A ausência de linha para um method_id → fallback ao provider (LLM/stub).
+# (method_id, kernel, params_json, note)
+METHOD_KERNELS = [
+    ("FEM", "fdm_poisson",
+     '{"equation":"poisson_1d","source":"x","n":60,"bc":"dirichlet_zero"}',
+     "FEM stand-in: Poisson 1D por diferenças finitas + Thomas (analytic-checkable, stdlib math)"),
+    ("FVM", "fdm_advection",
+     '{"equation":"advection_1d","scheme":"upwind","n":80,"steps":200,"cfl":0.8}',
+     "FVM stand-in: advecção 1D upwind (stdlib math)"),
 ]
 
 
@@ -244,6 +305,30 @@ def seed_dmns(conn):
     conn.commit()
 
 
+def seed_providers(conn):
+    """Popula agent_provider com os SEEDs de config (stub default + http local). Idempotente."""
+    c = conn.cursor()
+    c.execute("DELETE FROM agent_provider")
+    c.executemany(
+        "INSERT INTO agent_provider (id,kind,model,base_url,api_key_env,timeout_s,is_default,note) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        PROVIDERS,
+    )
+    conn.commit()
+
+
+def seed_method_kernels(conn):
+    """Popula method_kernel (ponte method_id→kernel executável como DADO). Idempotente.
+    Linha ausente para um method_id → numeric_exec cai no fallback provider (LLM/stub)."""
+    c = conn.cursor()
+    c.execute("DELETE FROM method_kernel")
+    c.executemany(
+        "INSERT INTO method_kernel (method_id,kernel,params_json,note) VALUES (?,?,?,?)",
+        METHOD_KERNELS,
+    )
+    conn.commit()
+
+
 def arm_watchdogs(conn, run_id: str, gates=None):
     """Arma watchdogs p/ os gates de uma run, lendo deadlines de gate_timeout (dados).
     Retorna lista de (gate_id, deadline_iso). `gates=None` arma todos configurados.
@@ -253,7 +338,6 @@ def arm_watchdogs(conn, run_id: str, gates=None):
     if gates is None:
         rows = conn.execute("SELECT gate_id,phase_id,seconds FROM gate_timeout").fetchall()
     else:
-        ph = [("gate_id", "phase_id", "seconds")]
         rows = conn.execute(
             "SELECT gate_id,phase_id,seconds FROM gate_timeout WHERE gate_id IN (%s)"
             % ",".join("?" * len(gates)), gates
