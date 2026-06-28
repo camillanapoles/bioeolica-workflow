@@ -302,7 +302,9 @@ def run_queries(conn):
     print(f"\n{sep}\nTotais:")
     for t in ("domain_catalog","capability","numerical_method","tool","socratic_rule",
               "response_step","context_layer","mandate","workflow_phase","quality_metric"):
-        n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        if not t.isidentifier():
+            continue
+        n = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
         print(f"  {t:<20} {n} linhas")
 
 
