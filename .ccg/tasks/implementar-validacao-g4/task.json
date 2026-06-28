@@ -1,0 +1,42 @@
+{
+  "id": "implementar-validacao-g4",
+  "title": "Gate G4/Validada sobre agent_output numérico (error_vs_analytic + linear_residual) — retomada pós-restart",
+  "status": "in_progress",
+  "complexity": "M",
+  "risk": "medium",
+  "domain": "backend",
+  "currentPhase": "implementation",
+  "nextAction": "retomar sessão fcc-claude 15e7c37e com mandato reforçado + finalizar G4",
+  "createdAt": "2026-06-28T17:15:00Z",
+  "branch": "main",
+  "head": "edfc916",
+  "session_fcc_claude": "15e7c37e-6be5-4d3f-92d2-6a57d982a351",
+  "wip_staged": [
+    "lab_db/report.py (NEW, 106L) — agregador F7, queries sobre DB, sem literais",
+    "lab_db/seed_fsm.py (+10) — tabela report_artifact + VVV rows 27-28 (G4 numeric gates)",
+    "lab_db/fsm.py (+51) — lógica de aplicação dos gates G4",
+    "lab_db/models.py (+11) — ORM 1:1 de report_artifact (spec: build.py↔models.py)",
+    "tests/test_report.py (NEW, 131L)",
+    "tests/test_fsm.py (+28)"
+  ],
+  "mandate": {
+    "zero_hardcoded": "literais de gate/domínio/método/métrica = linhas de DB (seed), nunca constantes de código",
+    "zero_pypi": "apenas sqlite3/os/json/__future__/stdlib; .venv isolado por uv",
+    "ssot": "lab.db é SSOT; build.py↔models.py devem permanecer 1:1",
+    "test_gate": "python3 -m tests deve passar (iron rule #6); cada novo módulo com dados precisa test_no_hardcoded_*"
+  },
+  "vvv_g4_added": [
+    {"row": 27, "gate": "G4", "metric": "error_vs_analytic", "op": "lt", "val": "0.01", "note": "erro numérico vs solução analítica < 1%"},
+    {"row": 28, "gate": "G4", "metric": "linear_residual", "op": "lt", "val": "1e-8", "note": "resíduo do solver linear"}
+  ],
+  "continuity_recovery": {
+    "root_cause": "fcc-server (proxy :8082) caiu após restart; sem proxy a sessão fcc-claude perdeu acesso ao modelo e ao conceito do mandato",
+    "session_jsonl_present": "/home/cnmfs/.claude/projects/-home-cnmfs-bioeolica-workflow/15e7c37e-6be5-4d3f-92d2-6a57d982a351.jsonl",
+    "recovery_plan": "subir fcc-server → claude --resume <id> com ANTHROPIC_BASE_URL=:8082 + re-injeção do mandato ZERO-HARDCODED e do roadmap FINEP (Lab1/Lab2)"
+  },
+  "project_context_finep": {
+    "Lab1": "compósito ecológico papel-machê+grafite (substitui fibra de vidro)",
+    "Lab2": "gerador eólico Savonius/Arquimedes com PMG usando material do Lab1",
+    "framework": "VVV (Validation/Verification/Verification) — gates G1-G7 + invariantes I1-I4 + loop Kaizen"
+  }
+}

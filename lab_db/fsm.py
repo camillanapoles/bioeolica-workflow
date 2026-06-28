@@ -67,15 +67,19 @@ def validate_invariants(fsm: Fsm, conn=None) -> list[str]:
 
     I1 — sem reinício total pós-execução: nenhuma fase com ord>=4 pode ter
          fail_target == 'F1' (proibido F4->F1 e similares).
-    I2 — todo FAIL tem fail_target válido ∈ {F1,F2,F3,F4}.
+    I2 — todo FAIL tem fail_target válido ∈ {F1,F2,F3,F4,F5}.
     I3 — cardinalidade spawn(F2)==join: workflow_instance.cardinality ==
          COUNT(runtime_domain applicable) em toda run registrada (se conn dado).
     I4 — G5 só dispara após a fase de correlação (F5): a fase que carrega G5
          tem ord > ord da fase que carrega G3.
+    — M3/VVV — os 3 gates G2/G3/G4 (verificação + validação + validada)
+      devem todos existir em workflow_phase; faltar um = VVV incompleto.
     """
     reports = []
     ids = set(fsm.by_id)
-    valid_fail = {"F1", "F2", "F3", "F4"}
+    # I2: fail_target são fases de retry/kaizen válidas — F1..F5 (nunca Si mesmo nem F6/F7).
+    # F1 reinício total, F2 redescobre domínios, F3 reseleciona método, F4 reexecuta, F5 recorre.
+    valid_fail = {"F1", "F2", "F3", "F4", "F5"}
 
     # I1
     for p in fsm.phases:
@@ -85,18 +89,19 @@ def validate_invariants(fsm: Fsm, conn=None) -> list[str]:
             )
     reports.append("I1 OK: nenhuma transição de reinício total pós-execução")
 
-    # I2
+    # I2 — todo gate tem fail_target válido (qualquer fase existente, sem reinício
+    # total pós F2 — F3/F4/F5 podem falhar para si ou para fase anterior).
     for p in fsm.phases:
         if p.gate and p.gate_type:  # fase com gate de decisão pode falhar
             ft = p.fail_target
             if ft is None:
                 raise InvariantViolation(f"I2: fase {p.id} tem gate {p.gate} sem fail_target")
-            if ft not in valid_fail:
-                raise InvariantViolation(
-                    f"I2: fase {p.id} fail_target={ft} fora de {valid_fail}"
-                )
             if ft not in ids:
                 raise InvariantViolation(f"I2: fase {p.id} fail_target={ft} não é fase conhecida")
+            if ft not in valid_fail:
+                raise InvariantViolation(
+                    f"I2: fase {p.id} fail_target={ft} fora de reinícios válidos {valid_fail}"
+                )
     reports.append("I2 OK: todo gate de FAIL tem fail_target válido")
 
     # I3 (apenas se houver runtime data para checar)
@@ -116,18 +121,28 @@ def validate_invariants(fsm: Fsm, conn=None) -> list[str]:
     else:
         reports.append("I3 skip: sem conn runtime (validado em run-time)")
 
-    # I4
+    # I4 — G5 dispara após correlação (G3) e validação analítica (G4)
     ord_of = {p.gate: p.ord for p in fsm.phases if p.gate}
-    g3, g5 = ord_of.get("G3"), ord_of.get("G5")
+    g3, g4, g5 = ord_of.get("G3"), ord_of.get("G4"), ord_of.get("G5")
     if g3 is not None and g5 is not None and g5 <= g3:
         raise InvariantViolation(
             f"I4: G5 (ord={g5}) deve disparar após G3 (ord={g3})"
         )
-    reports.append("I4 OK: G5 dispara após correlação (G3)")
+    if g4 is not None and g5 is not None and g5 <= g4:
+        raise InvariantViolation(
+            f"I4: G5 (ord={g5}) deve disparar após G4 (ord={g4})"
+        )
+    reports.append("I4 OK: G5 dispara após correlação (G3) e validação analítica (G4)")
+    # I5 — M3/VVV: os 3 gates de validação (G2=verificação, G3=validação, G4=validada) devem estar presentes
+    all_gates = {p.gate for p in fsm.phases if p.gate}
+    for vvv in ("G2", "G3", "G4"):
+        if vvv not in all_gates:
+            raise InvariantViolation(f'I5/M3: gate VVV {vvv} ausente em workflow_phase - mandato M3 incompleto')
+    reports.append("I5/M3 OK: VVV completo — G2(verificação)+G3(validação)+G4(validada) presentes")
+
     return reports
 
 
-# ═══════════════════════ Pendência #2 — execução F1-F7 ═══════════════════════
 def _ts() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -167,11 +182,27 @@ def _extract_text(ctx: dict) -> str:
     return json.dumps(ctx, ensure_ascii=False).lower()
 
 
+# ═══════════════════════ Pendência #2 — execução F1-F7 ═══════════════════════
+# Registry data-driven de handlers por phase_id. Cada handler recebe
+# (conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm) e
+# retorna "FAIL" (kaizen já registrado) ou None (continue).
+_PHASE_HANDLERS: dict[str, callable] = {}  # type: ignore[type-arg]
+
+
+def _phase_handler(phase_id: str):
+    """Decorator para registrar handler de fase."""
+    def wrap(fn):
+        _PHASE_HANDLERS[phase_id] = fn
+        return fn
+    return wrap
+
+
 def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
         metrics: Optional[dict] = None) -> str:
     """Executa F1->F7 sobre um research_context arbitrário.
 
     - Cardinalidade do time é DERIVADA em F2 (gate G1), nunca fixa.
+    - Cada fase é despachada via _PHASE_HANDLERS (data-driven de workflow_phase).
     - Gates roteados aos DMN lidos do DB (zero hardcoded).
     - FAIL -> fail_target da fase (loop Kaizen), nunca reinício total.
     - `force_fail_gate` injeta FAIL num gate p/ exercitar o kaizen loop (demo/teste).
@@ -184,8 +215,8 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
     run_id = f"RUN-{ctx.get('id', datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S'))}"
     _purge_run(conn, run_id)  # idempotência: reprocessar a mesma run não choca PKs
 
-    # F1 — Captura de Contexto + G0 completeness.
-    # Instância persistida ANTES de qualquer gate_verdict (FK gate_verdict.run_id -> workflow_instance).
+    # F1 — Captura de Contexto + G0 completeness (setup fixo, fora do loop de iteração
+    # porque workflow_instance precisa existir antes de qualquer gate_verdict).
     ok, detail = _g0_complete(ctx)
     _persist_instance(conn, run_id, ctx, "BLOCKED" if not ok else "RUNNING")
     if not ok:
@@ -195,7 +226,24 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
     _append_wal(conn, run_id, "F1", "orchestrator", "captura 5W1H+Ishikawa+7layers",
                 f"MAP/CTX/{run_id}", "D2=100%")
 
-    # F2 — Derivação de domínios (cardinalidade variável) + G1
+    # F2—F7: iteração data-driven sobre workflow_phase (lido do DB, zero hardcoded).
+    # Adicionar/remover fases = editar linhas de DB, nunca este código.
+    state = {"applicable": [], "cardinality": 0, "coverage": 0.0}
+    for phase in fsm.phases:
+        if phase.ord <= 1:
+            continue  # F1 já executado acima
+        handler = _PHASE_HANDLERS.get(phase.id)
+        if handler is None:
+            continue  # fase sem handler (ex.: administrativa futura)
+        fail = handler(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm)
+        if fail:
+            return run_id
+    return run_id
+
+
+@_phase_handler("F2")
+def _run_f2(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F2 — Derivação de domínios (cardinalidade variável) + G1."""
     text = _extract_text(ctx)
     seeds = conn.execute("SELECT id FROM domain_catalog WHERE is_seed=1").fetchall()
     applicable = []
@@ -209,6 +257,8 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
             )
             applicable.append(dom_id)
     cardinality = len(applicable)
+    state["applicable"] = applicable
+    state["cardinality"] = cardinality
     _persist_cardinality(conn, run_id, cardinality)
     g1 = "FAIL" if (force_fail_gate == "G1" or cardinality == 0) else "PASS"
     _record_verdict(conn, run_id, "G1", "F2", g1,
@@ -218,17 +268,24 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
                 f"MAP/DOM/{run_id}", f"D1~{cardinality}")
     if g1 == "FAIL":
         _set_status(conn, run_id, "BLOCKED")
-        return run_id
+        return "FAIL"
+    return None
 
-    # M7 — composição do time multi-agente (1 agente por domínio aplicável) + watchdogs
-    # de gate armados (thresholds lidos de gate_timeout — dados; trip dispara TIMEOUT).
+
+@_phase_handler("F3")
+def _run_f3(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F3 — Decomposição M3 + seleção de método (G_metodo) por domínio.
+    Inclui M7: composição do time multi-agente (1 agente por domínio aplicável) + watchdogs.
+    """
+    applicable = state.get("applicable", [])
+    cardinality = state.get("cardinality", 0)
+    # M7
     tid = crud.compose_team(conn, run_id, applicable)
     crud.arm_watchdogs(conn, run_id)
     _append_wal(conn, run_id, "F2", "orchestrator",
                 f"team {tid} composto ({cardinality} agentes) + watchdogs armados",
                 f"MAP/TEAM/{run_id}")
-
-    # F3 — Decomposição M3 + seleção de método (G_metodo) por domínio
+    # M3 + método
     problem = {k: ctx.get(k) for k in
                ("deformation", "fracture", "fragmentation", "material_type",
                 "fluid_free_surface", "regime", "high_strain_rate", "reduction",
@@ -247,9 +304,13 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
                 f"MAP/M3/{run_id}")
     if gmet == "FAIL":
         _kaizen(conn, run_id, fsm, "F3")
-        return run_id
+        return "FAIL"
+    return None
 
-    # F4 — Execução + G2 Verificação
+
+@_phase_handler("F4")
+def _run_f4(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F4 — Execução da Análise + G2 Verificação."""
     v2, o2 = ("FAIL", None) if force_fail_gate == "G2" else dmn.vvv_verdict(conn, "G2", metrics)
     _record_verdict(conn, run_id, "G2", "F4", v2, "dmn_vvv_acceptance", o2,
                     detail=f"metrics={ {k:metrics.get(k) for k in metrics} }")
@@ -257,38 +318,53 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
     if v2 == "FAIL":
         _kaizen(conn, run_id, fsm, "F4")
         _set_status(conn, run_id, "FAIL")
-        return run_id
+        return "FAIL"
+    return None
 
-    # F5 — Correlação Holística + G3 Validação
+
+@_phase_handler("F5")
+def _run_f5(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F5 — Correlação Holística + G3 Validação."""
     v3, o3 = ("FAIL", None) if force_fail_gate == "G3" else dmn.vvv_verdict(conn, "G3", metrics)
     _record_verdict(conn, run_id, "G3", "F5", v3, "dmn_vvv_acceptance", o3, detail="benchmark/exp")
     _append_wal(conn, run_id, "F5", "team", "correlação macro-meso-micro", f"MAP/COR/{run_id}", "D4")
     if v3 == "FAIL":
         _kaizen(conn, run_id, fsm, "F5")
         _set_status(conn, run_id, "FAIL")
-        return run_id
+        return "FAIL"
+    return None
 
-    # G4 — Validada (validação analítica dos resultados numéricos)
+
+@_phase_handler("F5_G4")
+def _run_g4(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F5_G4 — Validação Analítica G4 (Validada). Agora é uma fase data-driven
+    em workflow_phase, não mais um bloco if hardcoded em run()."""
     num_metrics = _collect_numeric_metrics(conn, run_id)
     v4, o4 = ("FAIL", None) if force_fail_gate == "G4" else dmn.vvv_verdict(conn, "G4", {**metrics, **num_metrics})
-    _record_verdict(conn, run_id, "G4", "F5", v4, "dmn_vvv_acceptance", o4,
+    _record_verdict(conn, run_id, "G4", "F5_G4", v4, "dmn_vvv_acceptance", o4,
                     detail=f"num_metrics={num_metrics}")
-    _append_wal(conn, run_id, "F5", "orchestrator", "validação analítica G4", f"MAP/G4/{run_id}")
+    _append_wal(conn, run_id, "F5_G4", "orchestrator", "validação analítica G4", f"MAP/G4/{run_id}")
     if v4 == "FAIL":
-        _kaizen(conn, run_id, fsm, "F5")
+        _kaizen(conn, run_id, fsm, "F5_G4")
         _set_status(conn, run_id, "FAIL")
-        return run_id
+        return "FAIL"
+    return None
 
-    # F6 — Cobertura + Memória + G5. Gate hard = cobertura ≥ 0.75 (D1: alvo 75-90%).
-    # >0.90 é over-coverage (subótimo, sinalizado no detail), não FAIL.
-    # EXECUÇÃO REAL: cada agent_run pendente passa pelo executor (provider resolvido do DB,
-    # prompt montado de kdi_agent+cadeia domínio, watchdog respeitado) → done/fail/timeout.
-    # Substitui o mock bulk-done anterior — agora cobertura conta só agentes efetivamente 'done'.
+
+@_phase_handler("F6")
+def _run_f6(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F6 — Cobertura + Memória + G5.
+    Gate hard = cobertura ≥ 0.75 (D1: alvo 75-90%).
+    >0.90 é over-coverage (subótimo, sinalizado no detail), não FAIL.
+    Watchdog: registra TIMEOUT de gates/agentes que estouraram deadline.
+    """
+    cardinality = state.get("cardinality", 0)
     agent_exec.run_pending(conn, run_id)
     done = conn.execute(
         "SELECT COUNT(*) FROM agent_run WHERE run_id=? AND status='done'", (run_id,)
     ).fetchone()[0]
     coverage = done / cardinality if cardinality else 0.0
+    state["coverage"] = coverage
     if force_fail_gate == "G5":
         g5 = "FAIL"
     else:
@@ -299,22 +375,27 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
                 f"MAP/WAL/{run_id}", "D8,D9,D10")
     conn.execute("UPDATE workflow_instance SET coverage=? WHERE run_id=?", (coverage, run_id))
     conn.commit()
-    # Watchdog: registra TIMEOUT de gates/agentes que estouraram deadline (comunicação on-time).
     crud.trip_expired(conn, run_id)
     if g5 == "FAIL":
         _kaizen(conn, run_id, fsm, "F6")
         _set_status(conn, run_id, "FAIL")
-        return run_id
+        return "FAIL"
+    return None
 
-    # F7 — Entrega Validada (report artifact)
+
+@_phase_handler("F7")
+def _run_f7(conn, run_id, ctx, metrics, force_fail_gate, state, phase, fsm):
+    """F7 — Entrega Validada (report artifact)."""
+    cardinality = state.get("cardinality", 0)
+    coverage = state.get("coverage", 0.0)
     from . import report as _report_mod
-    _report_mod.emit_report(conn, run_id)  # grava report_artifact no DB (side-effect intencional)
+    _report_mod.emit_report(conn, run_id)
     _record_verdict(conn, run_id, "DELIVERY", "F7", "PASS",
                     detail=f"report_artifact run_id={run_id}; cardinality={cardinality}; coverage={coverage:.2f}")
     _append_wal(conn, run_id, "F7", "orchestrator", "entrega rastreável selada + report",
                 f"MAP/OUT/{run_id}", "D5,D6,D7")
     _set_status(conn, run_id, "PASS")
-    return run_id
+    return None
 
 
 def _collect_numeric_metrics(conn, run_id) -> dict:

@@ -1,10 +1,85 @@
 {
-
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
-  "teammateMode": "auto",
   "enabledPlugins": {
-    "ecc@ecc": true
-  }
+    "ecc@ecc": true,
+    "claude-mem@thedotmack": true,
+    "superpowers@superpowers-marketplace": true
+  },
+  "teammateMode": "auto",
+  
+  "advisorModel": "sonnet",
+  "alwaysThinkingEnabled": true,
+  
+  "permissionRules": [
+    {
+      "tool": "Bash",
+      "pattern": "venv/bin/python *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "echo *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "ls *",
+      "action": "allow"
+    },
+    {
+         "tool": "Bash",
+      "pattern": "sqlite3 *",
+      "action": "allow"
+    },
+    
+    {
+      "tool": "Bash",
+      "pattern": "xmllint *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "pwd *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "git *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "cat *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "npx *",
+      "action": "allow"
+    },
+    {
+      "tool": "gh",
+      "pattern": " *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "git *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "gitnexus *",
+      "action": "allow"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "mem-search *",
+      "action": "allow"
+    }
+  ]
 }
+
+    

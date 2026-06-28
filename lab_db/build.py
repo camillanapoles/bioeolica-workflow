@@ -185,13 +185,14 @@ MANDATES = [
 ]
 # id, ord, nome, gate, gate_type, dmn_source, fail_target, mandate_ref
 PHASES = [
-    ("F1",1,"Captura de Contexto",   "G0","completeness",None,                   "F1","M4"),
-    ("F2",2,"Derivacao de Dominios", "G1","XOR",         "dmn_relevance_check",  "F1","M7"),
-    ("F3",3,"Decomposicao M3",       "G_metodo","DMN",   "dmn_method_selection", "F3","M1"),
-    ("F4",4,"Execucao da Analise",   "G2","XOR",         "dmn_vvv_acceptance",   "F4","M3"),
-    ("F5",5,"Correlacao Holistica",  "G3","XOR",         "dmn_vvv_acceptance",   "F3","M3"),
-    ("F6",6,"Cobertura + Memoria",   "G5","XOR",         None,                   "F2","M7"),
-    ("F7",7,"Entrega Validada",      None,None,          None,                   None,"M5"),
+    ("F1",1,"Captura de Contexto",    "G0","completeness",None,                   "F1","M4"),
+    ("F2",2,"Derivacao de Dominios",  "G1","XOR",         "dmn_relevance_check",  "F1","M7"),
+    ("F3",3,"Decomposicao M3",        "G_metodo","DMN",   "dmn_method_selection", "F3","M1"),
+    ("F4",4,"Execucao da Analise",    "G2","XOR",         "dmn_vvv_acceptance",   "F4","M3"),
+    ("F5",5,"Correlacao Holistica",   "G3","XOR",         "dmn_vvv_acceptance",   "F3","M3"),
+    ("F5_G4",6,"Validacao Analitica G4","G4","XOR",       "dmn_vvv_acceptance",   "F5","M3"),
+    ("F6",7,"Cobertura + Memoria",    "G5","XOR",         None,                   "F2","M7"),
+    ("F7",8,"Entrega Validada",       None,None,          None,                   None,"M5"),
 ]
 METRICS = [
     ("D1","Cobertura por relevancia","75-90%","G5"),

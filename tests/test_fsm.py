@@ -1,4 +1,4 @@
-"""tests/test_fsm.py — FSM data-driven: invariantes I1-I4, cardinalidade variável,
+"""tests/test_fsm.py — FSM data-driven: invariantes I1-I5, cardinalidade variável,
 loop Kaizen, anti-hardcode. Fecha a pendência #1 do doc 04 §7.
 
 Pytest-FREE: roda via `python3 -m tests.test_fsm` (apenas assert + sqlite3 stdlib).
@@ -46,11 +46,11 @@ def _ctx_structure():
     )
 
 
-# ──────────── Pendência #1 — invariantes I1-I4 ────────────
+# ──────────── Pendência #1 — invariantes I1-I5 ────────────
 def test_invariants_I1_I4():
     f = fsm.load_fsm(CONN)
     reports = fsm.validate_invariants(f, CONN)
-    assert len(reports) >= 4, f"esperado ≥4 relatórios, obtido {len(reports)}"
+    assert len(reports) >= 5, f"esperado ≥5 relatórios (I1-I5), obtido {len(reports)}"
     assert all("OK" in r or "skip" in r for r in reports), reports
 
 
@@ -68,6 +68,23 @@ def test_invariant_violation_I1_raises():
         CONN.execute("UPDATE workflow_phase SET fail_target='F4' WHERE id='F4'")
         CONN.commit()
     assert raised, "I1 violado deveria levantar InvariantViolation"
+
+
+def test_invariant_I5_vvv_triple_gate_raises():
+    """Remover G4 de workflow_phase deve levantar InvariantViolation I5/M3 (VVV incompleto)."""
+    old_gate = CONN.execute("SELECT gate FROM workflow_phase WHERE id='F5_G4'").fetchone()[0]
+    CONN.execute("UPDATE workflow_phase SET gate=NULL WHERE id='F5_G4'")
+    CONN.commit()
+    f = fsm.load_fsm(CONN)
+    try:
+        fsm.validate_invariants(f)
+        raised = False
+    except fsm.InvariantViolation as e:
+        raised = "I5/M3" in str(e)
+    finally:
+        CONN.execute("UPDATE workflow_phase SET gate=? WHERE id='F5_G4'", (old_gate,))
+        CONN.commit()
+    assert raised, "I5/M3 violado (G4 ausente) deveria levantar InvariantViolation"
 
 
 # ──────────── Pendência #2 — cardinalidade DERIVADA (variável por pesquisa) ────────────
