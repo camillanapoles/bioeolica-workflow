@@ -308,7 +308,7 @@ def run(conn, research_context: dict, *, force_fail_gate: Optional[str] = None,
 
     # F7 — Entrega Validada (report artifact)
     from . import report as _report_mod
-    report_dict = _report_mod.emit_report(conn, run_id)
+    _report_mod.emit_report(conn, run_id)  # grava report_artifact no DB (side-effect intencional)
     _record_verdict(conn, run_id, "DELIVERY", "F7", "PASS",
                     detail=f"report_artifact run_id={run_id}; cardinality={cardinality}; coverage={coverage:.2f}")
     _append_wal(conn, run_id, "F7", "orchestrator", "entrega rastreável selada + report",
