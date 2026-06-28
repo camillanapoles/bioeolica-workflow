@@ -24,7 +24,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from .build import connect
-from . import crud
+from . import crud, numeric_exec
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lab.db")
 
@@ -203,6 +203,21 @@ def run_one(conn, agent: dict) -> str:
         return "timeout"
 
     kind, cfg = resolve_provider(conn, agent)
+
+    # Caminho NUMÉRICO (prioridade): se o method_id tem kernel mapeado (method_kernel — DADO),
+    # executa o solver de verdade e grava resultados numéricos reais em agent_output. Sem kernel
+    # → cai para o provider (stub/http) abaixo. Ramo estritamente aditivo: nada muda quando não
+    # há linha em method_kernel (preserva regressão 20/20).
+    numeric = numeric_exec.run_numeric(conn, agent)
+    if numeric is not None:
+        payload = json.dumps({"executed_at": _ts(), "deadline": deadline or "",
+                              "mode": "real-numeric", "result": numeric}, ensure_ascii=False)
+        _append_output(conn, agent["id"], payload)
+        crud.set_agent_status(conn, agent["id"], "done",
+                              result_ref=f"MAP/EXE/{agent['run_id']}/{agent['domain_id']}/NUMERIC",
+                              method_id=agent.get("method_id"))
+        return "done"
+
     system, user = build_prompt(conn, agent)
     fn = _PROVIDERS.get(kind)
     result = fn(cfg, system, user, deadline or "") if fn else None

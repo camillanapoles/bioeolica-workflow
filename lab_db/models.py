@@ -10,7 +10,7 @@ Engine: SQLite (desenvolvimento). Trocável por PostgreSQL+pgvector em produçã
 sem mudar o schema.
 
 Tabelas runtime (multi-agente + FSM) em lab_db.seed_fsm: runtime_domain,
-team_instance, agent_run, agent_provider, agent_output, gate_verdict,
+team_instance, agent_run, agent_provider, agent_output, method_kernel, gate_verdict,
 timeout_watchdog, gate_timeout, dmn_rule.
 Este ORM as espelha para manter o princípio 1:1 (DDL sqlite3 em build.py/seed_fsm.py
 == ORM aqui). Migrar um exige migrar o outro.
@@ -261,6 +261,17 @@ class AgentOutput(Base):
     agent_id = Column(String, ForeignKey("agent_run.id"), nullable=False)
     payload = Column(Text)
     created_at = Column(String, nullable=False)
+
+
+class MethodKernel(Base):
+    """Ponte method_id→kernel executável (mandato no-hardcoded). `kernel` é valor-de-coluna
+    resolvido pelo registry em numeric_exec._KERNELS (valor-de-coluna→callable). Linha ausente
+    → numeric_exec cai no fallback provider (LLM/stub)."""
+    __tablename__ = "method_kernel"
+    method_id = Column(String, ForeignKey("numerical_method.id"), primary_key=True)
+    kernel = Column(String, nullable=False)
+    params_json = Column(Text)
+    note = Column(String)
 
 
 class DmnDecision(Base):

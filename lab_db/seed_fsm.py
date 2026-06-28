@@ -137,6 +137,18 @@ CREATE TABLE gate_timeout (
     seconds   INTEGER NOT NULL
 );
 
+-- Ponte método numérico -> kernel executável (mandato no-hardcoded). method_id é FK ao
+-- catálogo JSON1; `kernel` é um valor-de-coluna mapeado pelo executor (numeric_exec) via
+-- registry valor-de-coluna→callable (mesmo padrão de _PROVIDERS/_GATE_KIND) — nunca literal
+-- de lógica. `params_json` carrega parâmetros do solver (grid, iters, BCs) como DADO.
+-- Linha ausente → aquele method_id não tem kernel stdlib; executor cai no provider (LLM/stub).
+CREATE TABLE method_kernel (
+    method_id   TEXT PRIMARY KEY REFERENCES numerical_method(id),
+    kernel      TEXT NOT NULL,    -- fdm_poisson | fdm_advection | ... (registry)
+    params_json TEXT,              -- parâmetros numéricos como dado (JSON)
+    note        TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_run_team ON agent_run(team_instance_id);
 CREATE INDEX IF NOT EXISTS idx_gate_verdict_run ON gate_verdict(run_id, gate);
 CREATE INDEX IF NOT EXISTS idx_watchdog_run ON timeout_watchdog(run_id, tripped);
@@ -161,6 +173,21 @@ PROVIDERS = [
      "offline deterministic — pipeline GREEN sem rede/PyPI"),
     ("prov_http_local", "http", "", "http://localhost:11434/v1", "LLM_API_KEY", 60, 0,
      "stdlib urllib; auth via os.environ[api_key_env]"),
+]
+
+# Ponte método→kernel como DADO (mandato no-hardcoded). O `kernel` aqui é um valor-de-coluna
+# resolvido pelo registry em numeric_exec._KERNELS (valor-de-coluna→callable) — adicionar um
+# solver = 1 entrada no registry + 1 linha aqui, nunca literal em branch de código.
+# params_json carrega a config numérica (grid, iters, BC) como dado; o kernel aplica defaults
+# se faltar. A ausência de linha para um method_id → fallback ao provider (LLM/stub).
+# (method_id, kernel, params_json, note)
+METHOD_KERNELS = [
+    ("FEM", "fdm_poisson",
+     '{"equation":"poisson_1d","source":"x","n":60,"bc":"dirichlet_zero"}',
+     "FEM stand-in: Poisson 1D por diferenças finitas + Thomas (analytic-checkable, stdlib math)"),
+    ("FVM", "fdm_advection",
+     '{"equation":"advection_1d","scheme":"upwind","n":80,"steps":200,"cfl":0.8}',
+     "FVM stand-in: advecção 1D upwind (stdlib math)"),
 ]
 
 
@@ -290,6 +317,18 @@ def seed_providers(conn):
     conn.commit()
 
 
+def seed_method_kernels(conn):
+    """Popula method_kernel (ponte method_id→kernel executável como DADO). Idempotente.
+    Linha ausente para um method_id → numeric_exec cai no fallback provider (LLM/stub)."""
+    c = conn.cursor()
+    c.execute("DELETE FROM method_kernel")
+    c.executemany(
+        "INSERT INTO method_kernel (method_id,kernel,params_json,note) VALUES (?,?,?,?)",
+        METHOD_KERNELS,
+    )
+    conn.commit()
+
+
 def arm_watchdogs(conn, run_id: str, gates=None):
     """Arma watchdogs p/ os gates de uma run, lendo deadlines de gate_timeout (dados).
     Retorna lista de (gate_id, deadline_iso). `gates=None` arma todos configurados.
@@ -299,7 +338,6 @@ def arm_watchdogs(conn, run_id: str, gates=None):
     if gates is None:
         rows = conn.execute("SELECT gate_id,phase_id,seconds FROM gate_timeout").fetchall()
     else:
-        ph = [("gate_id", "phase_id", "seconds")]
         rows = conn.execute(
             "SELECT gate_id,phase_id,seconds FROM gate_timeout WHERE gate_id IN (%s)"
             % ",".join("?" * len(gates)), gates
